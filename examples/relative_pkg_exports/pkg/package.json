@@ -1,0 +1,6 @@
+{
+  "name": "pkg",
+  "exports": {
+    "x": "./xxx.js"
+  }
+}
