@@ -8,9 +8,9 @@ JavaScript/Typescript module resolution in Rust
 
 | Feature | Status | Since  | Note |
 |---|---|---|---|
-| Relative Module Import | 👌 | 0.1.0 | `import './App'` when there is an `./App.ts ./App.tsx` etc.
+| Relative Module Import | 👌 | 0.1.0 | `import './App'` when there is an `./App.ts ./App.tsx ./App.js` etc.
 | Non-relative Module Import | 👌 | 0.1.0 | `import '@angular/core'`. See also **Package.json Supports**.
-| [TypeScript Path Mapping](https://www.typescriptlang.org/docs/handbook/module-resolution.html#path-mapping) | 👌 | 0.1.0 | `import '@/App'` when you define `baseUrl` and `paths` in parent `tsconfig.json`.
+| [TypeScript Path Mapping](https://www.typescriptlang.org/docs/handbook/module-resolution.html#path-mapping) | 👌 | 0.1.0 | `import '@/App'` when you define `baseUrl` and `paths` in a parent `tsconfig.json`.
 
 ## Package.json Supports
 
