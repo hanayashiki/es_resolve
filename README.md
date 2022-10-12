@@ -1,6 +1,8 @@
 # ES Resolve
 
-JavaScript/Typescript module resolution in Rust
+JavaScript/TypeScript module resolution in Rust
+
+**This library is under development**
 
 # Features
 
