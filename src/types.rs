@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -25,7 +26,7 @@ impl NodeResolveOptions {
         match env {
             TargetEnv::Node => Self {
                 main_fields: vec![MainFields::Main, MainFields::Module], // Node.js itself doesn't respect "module"
-                conditions: vec![format!("require"), format!("node"), format!("default")],
+                conditions: vec![format!("node"), format!("require"), format!("default")],
             },
             TargetEnv::Browser => Self {
                 main_fields: vec![MainFields::Browser, MainFields::Module, MainFields::Main],
@@ -36,12 +37,14 @@ impl NodeResolveOptions {
 }
 
 #[derive(Debug)]
-pub enum NodeResolverError {
+pub enum EsResolverError {
     IOError(std::io::Error, String),
     InvalidPackageJSON(serde_json::Error),
+    InvalidExports(String),
+    InvalidModuleSpecifier(String)
 }
 
-pub type NodeResolverResult<T> = Result<T, NodeResolverError>;
+pub type EsResolverResult<T> = Result<T, EsResolverError>;
 
 #[derive(Debug)]
 pub enum Extensions {
@@ -93,13 +96,14 @@ impl Extensions {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct PackageJSON {
     pub main: Option<String>,
     pub module: Option<String>,
     pub browser: Option<String>,
     pub react_native: Option<String>,
+    pub exports: Option<Exports>,
 }
 
 impl PackageJSON {
@@ -111,4 +115,12 @@ impl PackageJSON {
             MainFields::ReactNative => self.react_native.clone(),
         }
     }
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum Exports {
+    String(String),
+    Object(IndexMap<String, Option<Exports>>),
+    Array(Vec<Exports>)
 }

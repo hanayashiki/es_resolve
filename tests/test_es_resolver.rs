@@ -118,4 +118,16 @@ mod tests {
             source_str("node_modules_/node_modules/react/index.js")
         );
     }
+
+    #[test]
+    fn exports() {
+        let s = source("node_modules_/import_exports.mjs");
+
+        // package subpath == ""
+        let r = EsResolver::new("exports", &s, TargetEnv::Browser);
+        assert_eq!(
+            r.resolve().unwrap(),
+            source_str("node_modules_/node_modules/exports/index.mjs")
+        );
+    }
 }

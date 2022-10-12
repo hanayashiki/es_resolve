@@ -24,7 +24,7 @@ impl<'a> EsResolver<'a> {
 
     /// Resolve the path
     /// Reference: https://nodejs.org/api/modules.html#all-together
-    pub fn resolve(&self) -> NodeResolverResult<String> {
+    pub fn resolve(&self) -> EsResolverResult<String> {
         if matches!(self.env, TargetEnv::Node) {
             if self.target.starts_with("node:") {
                 return Ok(String::from(self.target));
@@ -34,7 +34,7 @@ impl<'a> EsResolver<'a> {
         }
 
         let abs_from = self.from.canonicalize().map_err(|e| {
-            NodeResolverError::IOError(
+            EsResolverError::IOError(
                 e,
                 format!(
                     "Cannot resolve from file {}. Does the file exist?",
@@ -52,13 +52,13 @@ impl<'a> EsResolver<'a> {
 
             if let Some(f) = as_file {
                 // TODO: make this compact
-                return NodeResolverResult::Ok(f.to_string_lossy().into());
+                return EsResolverResult::Ok(f.to_string_lossy().into());
             }
 
             let as_directory = self.load_as_directory(&abs_to);
 
             if let Some(f) = as_directory {
-                return NodeResolverResult::Ok(f.to_string_lossy().into());
+                return EsResolverResult::Ok(f.to_string_lossy().into());
             }
         } else {
             let maybe_from_dir = abs_from.parent();
@@ -66,9 +66,9 @@ impl<'a> EsResolver<'a> {
                 let from_dir = PathBuf::from(from_dir);
                 let as_node_module = self.load_node_modules(&from_dir, self.target);
 
-                if let Some(f) = as_node_module {
+                if let Ok(Some(f)) = as_node_module {
                     // TODO: make this compact
-                    return NodeResolverResult::Ok(f.to_string_lossy().into());
+                    return EsResolverResult::Ok(f.to_string_lossy().into());
                 }
             }
         }
@@ -162,7 +162,7 @@ impl<'a> EsResolver<'a> {
         return self.load_as_file(&with_index, DEFAULT_EXTENSIONS);
     }
 
-    fn load_package_json(p: &PathBuf) -> NodeResolverResult<PackageJSON> {
+    fn load_package_json(p: &PathBuf) -> EsResolverResult<PackageJSON> {
         let content = fs::read_to_string(p);
 
         match content {
@@ -170,9 +170,9 @@ impl<'a> EsResolver<'a> {
                 let package_json_result: Result<PackageJSON, serde_json::Error> =
                     serde_json::from_str(c.as_str());
 
-                package_json_result.map_err(|e| NodeResolverError::InvalidPackageJSON(e))
+                package_json_result.map_err(|e| EsResolverError::InvalidPackageJSON(e))
             }
-            Err(e) => Err(NodeResolverError::IOError(
+            Err(e) => Err(EsResolverError::IOError(
                 e,
                 format!("Can't read package.json"),
             )),
@@ -186,30 +186,245 @@ impl<'a> EsResolver<'a> {
     /// a. LOAD_PACKAGE_EXPORTS(X, DIR)
     /// b. LOAD_AS_FILE(DIR/X)
     /// c. LOAD_AS_DIRECTORY(DIR/X)
-    fn load_node_modules(&self, from_dir: &PathBuf, name: &str) -> Option<PathBuf> {
+    fn load_node_modules(
+        &self,
+        from_dir: &PathBuf,
+        name: &str,
+    ) -> EsResolverResult<Option<PathBuf>> {
         let mut maybe_cur_dir = Some(from_dir.clone());
 
         while maybe_cur_dir.is_some() {
             let cur_dir = maybe_cur_dir.unwrap();
 
-            // TODO: LOAD_PACKAGE_EXPORTS
+            let node_modules_dir = cur_dir.join("node_modules");
 
-            let module_base = cur_dir.join("node_modules").join(name);
+            match self.load_package_exports(&node_modules_dir, name) {
+                c @ Ok(Some(_)) => return c,
+                Err(EsResolverError::InvalidModuleSpecifier(_)) => {}
+                Err(EsResolverError::IOError(_, _)) => {}
+                c @ _ => return c,
+            }
+
+            let module_base = node_modules_dir.join(name);
 
             match self.load_as_file(&module_base, DEFAULT_EXTENSIONS) {
-                c @ Some(_) => return c,
+                c @ Some(_) => return Ok(c),
                 _ => {}
             };
 
             match self.load_as_directory(&module_base) {
-                c @ Some(_) => return c,
+                c @ Some(_) => return Ok(c),
                 _ => {}
             };
 
             maybe_cur_dir = cur_dir.parent().map(|c| PathBuf::from(c));
         }
 
-        None
+        Ok(None)
+    }
+
+    fn is_conditional_exports_main_sugar(
+        &self,
+        exports: &Exports,
+        package_json_path: &PathBuf,
+    ) -> EsResolverResult<bool> {
+        match exports {
+            Exports::String(_) | Exports::Array(_) => Ok(true),
+            Exports::Object(map) => {
+                let is_conditional_sugar = map.iter().all(|(s, _)| s.starts_with('.'));
+                let not_conditional_sugar = map.iter().all(|(s, _)| !s.starts_with('.'));
+
+                if is_conditional_sugar == !not_conditional_sugar {
+                    Ok(is_conditional_sugar)
+                } else {
+                    Err(EsResolverError::InvalidExports(
+                        format!(
+                            "The `pkg.exports` at {} here is invalid. Some starts with '.' but some does not. ",
+                            package_json_path.to_string_lossy(),
+                        )
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Reference:
+    /// Node's Standard:
+    ///     LOAD_PACKAGE_EXPORTS https://nodejs.org/api/modules.html#all-together
+    ///     PACKAGE_IMPORTS_RESOLVE https://nodejs.org/api/esm.html#resolver-algorithm-specification
+    /// Node's Source: resolve.js https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/resolve.js
+    fn load_package_exports(
+        &self,
+        node_modules_dir: &PathBuf,
+        name: &str,
+    ) -> EsResolverResult<Option<PathBuf>> {
+        let (package_name, _package_subpath) = self.parse_package_name(name)?;
+
+        let package_subpath = format!(".{}", _package_subpath);
+        // '.' when _subpath is empty, './subpath' when name is like `pkg/subpath`.
+
+        let package_json_path = node_modules_dir.join("package.json");
+
+        let package_json_result = fs::read_to_string(&package_json_path)
+            .map_err(|e| EsResolverError::IOError(e, format!("Can't read package.json")))?;
+
+        let package_json: PackageJSON = serde_json::from_str(&package_json_result)
+            .map_err(|e| EsResolverError::InvalidPackageJSON(e))?;
+
+        match package_json.exports {
+            None => return Ok(None),
+            Some(ref exports) => {
+                if !package_subpath.contains("*") && !package_subpath.contains(".") {
+                    let mut maybe_target = match exports {
+                        c @ Exports::String(_) => Some(c),
+                        c @ Exports::Object(ref o) => o.get(&package_subpath).unwrap_or(&None).as_ref(),
+                        c @ Exports::Array(_) => Some(c),
+                    };
+
+                    if self.is_conditional_exports_main_sugar(&exports, &package_json_path)?
+                        && package_name == "."
+                    {
+                        maybe_target = Some(&exports);
+                    }
+
+                    // Found a target, w/o pattern matching
+                    if let Some(target) = maybe_target {
+                        return self.resolve_package_target(
+                            &package_json_path,
+                            &target,
+                            "",
+                            false,
+                            false,
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+
+        // TODO: Pattern matching
+
+        Ok(Some(PathBuf::new()))
+    }
+
+    fn resolve_package_target(
+        &self,
+        package_json_path: &PathBuf,
+        target: &Exports,
+        subpath: &str,
+        pattern: bool,
+        internal: bool,
+        is_pathmap: bool,
+    ) -> EsResolverResult<Option<PathBuf>> {
+        match target {
+            Exports::String(target) => {
+                return self.resolve_package_target_string(
+                    package_json_path,
+                    target,
+                    subpath,
+                    pattern,
+                    internal,
+                    is_pathmap,
+                )
+            }
+            Exports::Object(object) => {
+                for (key, maybe_target) in object.iter() {
+                    if key == "default" || self.options.conditions.contains(key) {
+                        if let Some(target) = maybe_target {
+                            let result = self.resolve_package_target(
+                                package_json_path,
+                                target,
+                                subpath,
+                                pattern,
+                                internal,
+                                is_pathmap,
+                            )?;
+
+                            match result {
+                                Some(_) => return Ok(result),
+                                _ => continue,
+                            }
+                        }
+                    }
+                }
+            }
+            Exports::Array(targets) => {
+                for target in targets.iter() {
+                    let result = self.resolve_package_target(
+                        package_json_path,
+                        target,
+                        subpath,
+                        pattern,
+                        internal,
+                        is_pathmap,
+                    );
+
+                    match result {
+                        Ok(Some(_)) => return result,
+                        Err(EsResolverError::InvalidExports(_)) => continue,
+                        _ => continue,
+                    }
+                }
+            }
+        };
+
+        Err(EsResolverError::InvalidExports(format!("")))
+    }
+
+    fn resolve_package_target_string(
+        &self,
+        package_json_path: &PathBuf,
+        target: &str,
+        subpath: &str,
+        pattern: bool,
+        internal: bool,
+        is_pathmap: bool,
+    ) -> EsResolverResult<Option<PathBuf>> {
+        // Note: Omit Path Verification
+
+        let resolved = package_json_path.with_file_name(target);
+
+        return Ok(Some(PathBuf::from(resolved)));
+    }
+
+    /// Returns: (package_name, package_subpath), where `package_subpath` is what comes after `package_name` after `name`
+    fn parse_package_name(&self, name: &'a str) -> EsResolverResult<(&'a str, &'a str)> {
+        let mut sep_index = name.find('/');
+        let mut is_scope = false;
+
+        if name.as_bytes()[0] == b'@' {
+            is_scope = true;
+
+            match sep_index {
+                Some(i) => {
+                    sep_index = name[i + 1..].find('/');
+                }
+                None => {
+                    return Err(EsResolverError::InvalidModuleSpecifier(format!("{} is not a valid package name, because it is scoped without a slash. Valid scoped names are like '@babel/core'. ", name)));
+                }
+            };
+        }
+
+        let package_name = match sep_index {
+            Some(i) => &name[0..i],
+            None => &name,
+        };
+
+        if package_name.starts_with('.') {
+            return Err(EsResolverError::InvalidModuleSpecifier(format!(
+                "{} is not a valid package name, because it starts with a '.'.",
+                name
+            )));
+        }
+
+        if package_name.contains('%') || package_name.contains('\\') {
+            return Err(EsResolverError::InvalidModuleSpecifier(format!(
+                "{} is not a valid package name, because it contains '%' or '\\'.",
+                name
+            )));
+        }
+
+        Ok((package_name, &name[package_name.len()..]))
     }
 
     fn try_extension(abs_to: &PathBuf, extension: &Extensions) -> Option<PathBuf> {
