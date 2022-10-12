@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{data::*, types::*};
+use crate::{data::*, types::*, utils::*};
 use path_clean::{clean, PathClean};
 use tracing::debug;
 
@@ -66,7 +66,7 @@ impl<'a> EsResolver<'a> {
             let as_directory = self.load_as_directory(&abs_to);
 
             if let Some(f) = as_directory {
-                return EsResolverResult::Ok(f.to_string_lossy().into());
+                return Self::ok_with(f);
             }
         } else {
             let maybe_from_dir = abs_from.parent();
@@ -281,7 +281,6 @@ impl<'a> EsResolver<'a> {
         name: &str,
     ) -> EsResolverResult<Option<PathBuf>> {
         let (package_name, _package_subpath) = self.parse_package_name(name)?;
-        
 
         let package_subpath = format!(".{}", _package_subpath);
         // '.' when _subpath is empty, './subpath' when name is like `pkg/subpath`.
@@ -315,7 +314,7 @@ impl<'a> EsResolver<'a> {
                 if !package_subpath.contains("*") && !package_subpath.ends_with("/") {
                     let mut maybe_target = match exports {
                         c @ Exports::String(_) => Some(c),
-                        c @ Exports::Object(ref o) => {
+                        _c @ Exports::Object(ref o) => {
                             o.get(&package_subpath).unwrap_or(&None).as_ref()
                         }
                         c @ Exports::Array(_) => Some(c),
@@ -337,6 +336,7 @@ impl<'a> EsResolver<'a> {
                         return self.resolve_package_target(
                             &package_json_path,
                             &target,
+                            &package_subpath,
                             "",
                             false,
                             false,
@@ -345,7 +345,36 @@ impl<'a> EsResolver<'a> {
                     }
                 }
 
+                match exports {
+                    Exports::Object(ref o) => {
+                        let mut best_match = format!("");
 
+                        for (key, maybe_target) in o.iter() {
+                            if let Some(_) = maybe_target {
+                                if match_exports_pattern(key, &package_subpath)
+                                    && pattern_key_compare(&best_match, &key) == 1
+                                {
+                                    best_match = key.clone();
+                                }
+                            }
+                        }
+
+                        let subpath = extract_exports_pattern(&best_match, &package_subpath);
+
+                        if best_match.len() > 0 {
+                            return self.resolve_package_target(
+                                &package_json_path,
+                                o.get(&best_match).unwrap().as_ref().unwrap(),
+                                subpath,
+                                &package_subpath,
+                                true,
+                                false,
+                                false,
+                            );
+                        }
+                    }
+                    _ => {}
+                };
             }
         }
 
@@ -354,11 +383,13 @@ impl<'a> EsResolver<'a> {
         Ok(Some(PathBuf::new()))
     }
 
+    #[tracing::instrument(skip(self))]
     fn resolve_package_target(
         &self,
         package_json_path: &PathBuf,
         target: &Exports,
-        subpath: &str,
+        subpath: &str, // The portion that is matched in key pattern, "" if not a pattern match
+        package_subpath: &str,
         pattern: bool,
         internal: bool,
         is_pathmap: bool,
@@ -369,6 +400,7 @@ impl<'a> EsResolver<'a> {
                     package_json_path,
                     target,
                     subpath,
+                    package_subpath,
                     pattern,
                     internal,
                     is_pathmap,
@@ -382,6 +414,7 @@ impl<'a> EsResolver<'a> {
                                 package_json_path,
                                 target,
                                 subpath,
+                                package_subpath,
                                 pattern,
                                 internal,
                                 is_pathmap,
@@ -401,6 +434,7 @@ impl<'a> EsResolver<'a> {
                         package_json_path,
                         target,
                         subpath,
+                        package_subpath,
                         pattern,
                         internal,
                         is_pathmap,
@@ -418,30 +452,40 @@ impl<'a> EsResolver<'a> {
         Err(EsResolverError::InvalidExports(format!("")))
     }
 
+    #[tracing::instrument(skip(self))]
     fn resolve_package_target_string(
         &self,
         package_json_path: &PathBuf,
         target: &str,
         subpath: &str,
+        package_subpath: &str,
         pattern: bool,
         internal: bool,
         is_pathmap: bool,
     ) -> EsResolverResult<Option<PathBuf>> {
-        // Note: Omit Path Verification
+        // Note: Omit path verification
 
-        let resolved = package_json_path.with_file_name(target);
+        let resolved = if !pattern {
+            package_json_path.with_file_name(target)
+        } else {
+            // Only one-star pattern is supported
+            package_json_path.with_file_name(target.replacen('*', subpath, 1))
+        };
 
-        return Ok(Some(PathBuf::from(resolved)));
+        debug!(
+            resolved = format!("{}", resolved.to_string_lossy()),
+            pattern = pattern,
+            "matched target"
+        );
+
+        return Ok(Some(resolved));
     }
 
     /// Returns: (package_name, package_subpath), where `package_subpath` is what comes after `package_name` after `name`
     fn parse_package_name(&self, name: &'a str) -> EsResolverResult<(&'a str, &'a str)> {
         let mut sep_index = name.find('/');
-        let mut is_scope = false;
 
         if name.as_bytes()[0] == b'@' {
-            is_scope = true;
-
             match sep_index {
                 Some(i) => {
                     sep_index = name[i + 1..].find('/');

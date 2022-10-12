@@ -1,6 +1,7 @@
 mod es_resolver;
 mod types;
 mod data;
+mod utils;
 
 #[cfg(test)]
 mod tests;

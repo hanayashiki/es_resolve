@@ -159,4 +159,18 @@ mod tests {
             );
         })
     }
+
+    #[test]
+    fn exports_pattern() {
+        with_tracing(|| {
+            let s = source("node_modules_/import_exports.mjs");
+
+            // package subpath == "./star/*"
+            let r = EsResolver::new("exports_star/star/index", &s, TargetEnv::Browser);
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("node_modules_/node_modules/exports_star/lib/index.mjs")
+            );
+        });
+    }
 }
