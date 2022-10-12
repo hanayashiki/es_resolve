@@ -4,12 +4,15 @@ use std::{
 };
 
 use crate::{data::*, types::*};
+use path_clean::{clean, PathClean};
+use tracing::debug;
 
+#[derive(Debug)]
 pub struct EsResolver<'a> {
     target: &'a str,
     from: &'a PathBuf,
     env: TargetEnv,
-    options: NodeResolveOptions,
+    options: EsResolveOptions,
 }
 
 impl<'a> EsResolver<'a> {
@@ -18,12 +21,17 @@ impl<'a> EsResolver<'a> {
             target,
             from,
             env: env.clone(),
-            options: NodeResolveOptions::default_for(env),
+            options: EsResolveOptions::default_for(env),
         }
+    }
+
+    fn ok_with(path: PathBuf) -> EsResolverResult<String> {
+        return EsResolverResult::Ok(path.clean().to_string_lossy().into());
     }
 
     /// Resolve the path
     /// Reference: https://nodejs.org/api/modules.html#all-together
+    #[tracing::instrument(skip(self))]
     pub fn resolve(&self) -> EsResolverResult<String> {
         if matches!(self.env, TargetEnv::Node) {
             if self.target.starts_with("node:") {
@@ -52,7 +60,7 @@ impl<'a> EsResolver<'a> {
 
             if let Some(f) = as_file {
                 // TODO: make this compact
-                return EsResolverResult::Ok(f.to_string_lossy().into());
+                return Self::ok_with(f);
             }
 
             let as_directory = self.load_as_directory(&abs_to);
@@ -68,7 +76,7 @@ impl<'a> EsResolver<'a> {
 
                 if let Ok(Some(f)) = as_node_module {
                     // TODO: make this compact
-                    return EsResolverResult::Ok(f.to_string_lossy().into());
+                    return Self::ok_with(f);
                 }
             }
         }
@@ -86,9 +94,10 @@ impl<'a> EsResolver<'a> {
     ///
     /// Esbuild's way: https://github.com/evanw/esbuild/blob/81fa2ca2e71a0518fe1e411276593ef6ea21a380/internal/resolver/resolver.go#L1388
     ///
+    #[tracing::instrument(skip(self))]
     fn load_as_file(&self, abs_to: &PathBuf, extensions: &[Extensions]) -> Option<PathBuf> {
         if abs_to.is_file() {
-            return Some(abs_to.clone().canonicalize().unwrap());
+            return Some(abs_to.clone());
         } else {
             for extension in extensions.iter() {
                 match Self::try_extension(abs_to, extension) {
@@ -125,6 +134,7 @@ impl<'a> EsResolver<'a> {
     ///
     /// Esbuild: https://github.com/evanw/esbuild/blob/81fa2ca2e71a0518fe1e411276593ef6ea21a380/internal/resolver/resolver.go#L1568
     ///
+    #[tracing::instrument(skip(self))]
     fn load_as_directory(&self, abs_to: &PathBuf) -> Option<PathBuf> {
         let package_json_path = abs_to.join(PACKAGE_JSON);
 
@@ -186,6 +196,7 @@ impl<'a> EsResolver<'a> {
     /// a. LOAD_PACKAGE_EXPORTS(X, DIR)
     /// b. LOAD_AS_FILE(DIR/X)
     /// c. LOAD_AS_DIRECTORY(DIR/X)
+    #[tracing::instrument(skip(self))]
     fn load_node_modules(
         &self,
         from_dir: &PathBuf,
@@ -198,11 +209,21 @@ impl<'a> EsResolver<'a> {
 
             let node_modules_dir = cur_dir.join("node_modules");
 
+            debug!(
+                node_modules_dir = format!("{:?}", node_modules_dir),
+                "visiting"
+            );
+
             match self.load_package_exports(&node_modules_dir, name) {
                 c @ Ok(Some(_)) => return c,
-                Err(EsResolverError::InvalidModuleSpecifier(_)) => {}
-                Err(EsResolverError::IOError(_, _)) => {}
-                c @ _ => return c,
+                c @ (Err(EsResolverError::InvalidModuleSpecifier(_))
+                | Err(EsResolverError::IOError(_, _))) => {
+                    debug!(err = format!("{:?}", c), "load_package_exports error");
+                }
+                c @ _ => {
+                    debug!(err = format!("{:?}", c), "load_package_exports fatal error");
+                    return c;
+                }
             }
 
             let module_base = node_modules_dir.join(name);
@@ -253,31 +274,50 @@ impl<'a> EsResolver<'a> {
     ///     LOAD_PACKAGE_EXPORTS https://nodejs.org/api/modules.html#all-together
     ///     PACKAGE_IMPORTS_RESOLVE https://nodejs.org/api/esm.html#resolver-algorithm-specification
     /// Node's Source: resolve.js https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/resolve.js
+    #[tracing::instrument(skip(self))]
     fn load_package_exports(
         &self,
         node_modules_dir: &PathBuf,
         name: &str,
     ) -> EsResolverResult<Option<PathBuf>> {
         let (package_name, _package_subpath) = self.parse_package_name(name)?;
+        
 
         let package_subpath = format!(".{}", _package_subpath);
         // '.' when _subpath is empty, './subpath' when name is like `pkg/subpath`.
 
-        let package_json_path = node_modules_dir.join("package.json");
+        debug!(
+            package_name = format!("{:?}", package_name),
+            package_subpath = format!("{:?}", package_subpath),
+            "matching package exports"
+        );
 
-        let package_json_result = fs::read_to_string(&package_json_path)
-            .map_err(|e| EsResolverError::IOError(e, format!("Can't read package.json")))?;
+        let package_json_path = node_modules_dir.join(package_name).join("package.json");
+
+        let package_json_result = fs::read_to_string(&package_json_path).map_err(|e| {
+            EsResolverError::IOError(
+                e,
+                format!("Can't read package.json at {:?}", package_json_path),
+            )
+        })?;
 
         let package_json: PackageJSON = serde_json::from_str(&package_json_result)
             .map_err(|e| EsResolverError::InvalidPackageJSON(e))?;
 
+        debug!(
+            package_json_path = format!("{:?}", package_json_path),
+            "read package.json"
+        );
+
         match package_json.exports {
             None => return Ok(None),
             Some(ref exports) => {
-                if !package_subpath.contains("*") && !package_subpath.contains(".") {
+                if !package_subpath.contains("*") && !package_subpath.ends_with("/") {
                     let mut maybe_target = match exports {
                         c @ Exports::String(_) => Some(c),
-                        c @ Exports::Object(ref o) => o.get(&package_subpath).unwrap_or(&None).as_ref(),
+                        c @ Exports::Object(ref o) => {
+                            o.get(&package_subpath).unwrap_or(&None).as_ref()
+                        }
                         c @ Exports::Array(_) => Some(c),
                     };
 
@@ -289,6 +329,11 @@ impl<'a> EsResolver<'a> {
 
                     // Found a target, w/o pattern matching
                     if let Some(target) = maybe_target {
+                        debug!(
+                            package_name = format!("{:?}", package_name),
+                            package_subpath = format!("{:?}", package_subpath),
+                            "get full non-pattern export match"
+                        );
                         return self.resolve_package_target(
                             &package_json_path,
                             &target,
@@ -299,6 +344,8 @@ impl<'a> EsResolver<'a> {
                         );
                     }
                 }
+
+
             }
         }
 
@@ -432,7 +479,7 @@ impl<'a> EsResolver<'a> {
         let with_extension = abs_to.with_extension(extension_str);
 
         if with_extension.exists() {
-            return Some(PathBuf::from(with_extension.canonicalize().unwrap()));
+            return Some(PathBuf::from(with_extension.clean()));
         }
         None
     }

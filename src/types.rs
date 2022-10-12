@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use std::path::PathBuf;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MainFields {
     Main,
     Module,
@@ -10,18 +10,19 @@ pub enum MainFields {
     ReactNative,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum TargetEnv {
     Node,
     Browser,
 }
 
-pub struct NodeResolveOptions {
+#[derive(Clone, Debug)]
+pub struct EsResolveOptions {
     pub main_fields: Vec<MainFields>,
     pub conditions: Vec<String>,
 }
 
-impl NodeResolveOptions {
+impl EsResolveOptions {
     pub fn default_for(env: TargetEnv) -> Self {
         match env {
             TargetEnv::Node => Self {

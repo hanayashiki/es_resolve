@@ -3,6 +3,7 @@ mod tests {
     use std::path::PathBuf;
 
     use es_resolve::*;
+    use tracing::Level;
 
     fn source(s: &str) -> PathBuf {
         return PathBuf::from("tests")
@@ -14,6 +15,18 @@ mod tests {
 
     fn source_str(s: &str) -> String {
         return source(s).to_string_lossy().into();
+    }
+
+    fn with_tracing(f: fn() -> ()) {
+        let collector = tracing_subscriber::fmt()
+            // filter spans/events with level TRACE or higher.
+            .with_max_level(Level::DEBUG)
+            // build but do not install the subscriber.
+            .finish();
+
+        tracing::subscriber::with_default(collector, || {
+            f();
+        });
     }
 
     #[test]
@@ -121,13 +134,29 @@ mod tests {
 
     #[test]
     fn exports() {
-        let s = source("node_modules_/import_exports.mjs");
+        with_tracing(|| {
+            let s = source("node_modules_/import_exports.mjs");
 
-        // package subpath == ""
-        let r = EsResolver::new("exports", &s, TargetEnv::Browser);
-        assert_eq!(
-            r.resolve().unwrap(),
-            source_str("node_modules_/node_modules/exports/index.mjs")
-        );
+            // package subpath == "."
+            let r = EsResolver::new("exports", &s, TargetEnv::Browser);
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("node_modules_/node_modules/exports/index.mjs")
+            );
+
+            // package subpath == "./nest1/nest2"
+            let r = EsResolver::new("exports/nest1/nest2", &s, TargetEnv::Browser);
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("node_modules_/node_modules/exports/nest1/nest2/index.mjs")
+            );
+
+            // package subpath == "./nest2"
+            let r = EsResolver::new("exports/nest2", &s, TargetEnv::Browser);
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("node_modules_/node_modules/exports/nest1/nest2/index.mjs")
+            );
+        })
     }
 }
