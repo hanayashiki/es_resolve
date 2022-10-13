@@ -103,32 +103,32 @@ mod tests {
         let s = source("node_modules_/index.js");
 
         // index.js
-        let r = EsResolver::new("react", &s, TargetEnv::Browser);
+        let r = EsResolver::new("no_package_json", &s, TargetEnv::Browser);
         assert_eq!(
             r.resolve().unwrap(),
-            source_str("node_modules_/node_modules/react/index.js")
+            source_str("node_modules_/node_modules/no_package_json/index.js")
         );
 
         // subfile
-        let r = EsResolver::new("react/jsx-runtime", &s, TargetEnv::Browser);
+        let r = EsResolver::new("no_package_json/jsx-runtime", &s, TargetEnv::Browser);
         assert_eq!(
             r.resolve().unwrap(),
-            source_str("node_modules_/node_modules/react/jsx-runtime.js")
+            source_str("node_modules_/node_modules/no_package_json/jsx-runtime.js")
         );
 
         // subfile
-        let r = EsResolver::new("react/jsx-runtime", &s, TargetEnv::Browser);
+        let r = EsResolver::new("no_package_json/jsx-runtime", &s, TargetEnv::Browser);
         assert_eq!(
             r.resolve().unwrap(),
-            source_str("node_modules_/node_modules/react/jsx-runtime.js")
+            source_str("node_modules_/node_modules/no_package_json/jsx-runtime.js")
         );
 
         // multi-parent import
         let deep_source = source("node_modules_/deep/dir1/dir2/dir3/index.js");
-        let r = EsResolver::new("react", &deep_source, TargetEnv::Browser);
+        let r = EsResolver::new("no_package_json", &deep_source, TargetEnv::Browser);
         assert_eq!(
             r.resolve().unwrap(),
-            source_str("node_modules_/node_modules/react/index.js")
+            source_str("node_modules_/node_modules/no_package_json/index.js")
         );
     }
 
@@ -156,6 +156,51 @@ mod tests {
             assert_eq!(
                 r.resolve().unwrap(),
                 source_str("node_modules_/node_modules/exports/nest1/nest2/index.mjs")
+            );
+
+            // package exports array
+            let r = EsResolver::new("exports_array", &s, TargetEnv::Browser);
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("node_modules_/node_modules/exports_array/index.mjs")
+            );
+
+            // scoped package
+            let r = EsResolver::new("@scoped/exports/nested", &s, TargetEnv::Browser);
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("node_modules_/node_modules/@scoped/exports/index.mjs")
+            );
+        })
+    }
+
+    #[test]
+    fn exports_sugar() {
+        with_tracing(|| {
+            let s = source("node_modules_/import_exports.mjs");
+
+            let r = EsResolver::new("exports_sugar_string", &s, TargetEnv::Browser);
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("node_modules_/node_modules/exports_sugar_string/index.mjs")
+            );
+
+            let r = EsResolver::new("exports_sugar_object", &s, TargetEnv::Browser);
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("node_modules_/node_modules/exports_sugar_object/index.mjs")
+            );
+
+            let r = EsResolver::new("exports_sugar_array", &s, TargetEnv::Browser);
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("node_modules_/node_modules/exports_sugar_array/c.mjs")
+            );
+
+            let r = EsResolver::new("exports_sugar_array", &s, TargetEnv::Node);
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("node_modules_/node_modules/exports_sugar_array/a.js")
             );
         })
     }

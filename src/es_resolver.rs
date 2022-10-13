@@ -1,18 +1,15 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::PathBuf};
 
 use crate::{data::*, types::*, utils::*};
-use path_clean::{clean, PathClean};
+use path_clean::PathClean;
 use tracing::debug;
 
 #[derive(Debug)]
 pub struct EsResolver<'a> {
-    target: &'a str,
-    from: &'a PathBuf,
-    env: TargetEnv,
-    options: EsResolveOptions,
+    pub target: &'a str,
+    pub from: &'a PathBuf,
+    pub env: TargetEnv,
+    pub options: EsResolveOptions,
 }
 
 impl<'a> EsResolver<'a> {
@@ -30,7 +27,8 @@ impl<'a> EsResolver<'a> {
     }
 
     /// Resolve the path
-    /// Reference: https://nodejs.org/api/modules.html#all-together
+    /// 
+    /// Reference: <https://nodejs.org/api/modules.html#all-together>
     #[tracing::instrument(skip(self))]
     pub fn resolve(&self) -> EsResolverResult<String> {
         if matches!(self.env, TargetEnv::Node) {
@@ -81,7 +79,7 @@ impl<'a> EsResolver<'a> {
             }
         }
 
-        return Ok(format!(""));
+        return Err(EsResolverError::ModuleNotFound(format!("Cannot resolve {} from {}", self.target, self.from.to_string_lossy())));
     }
 
     /// Here we follow esbuild in resolving path:
@@ -252,15 +250,15 @@ impl<'a> EsResolver<'a> {
         match exports {
             Exports::String(_) | Exports::Array(_) => Ok(true),
             Exports::Object(map) => {
-                let is_conditional_sugar = map.iter().all(|(s, _)| s.starts_with('.'));
-                let not_conditional_sugar = map.iter().all(|(s, _)| !s.starts_with('.'));
+                let is_conditional_sugar = map.iter().all(|(s, _)| !s.starts_with('.'));
+                let any_conditional = map.iter().any(|(s, _)| !s.starts_with('.'));
 
-                if is_conditional_sugar == !not_conditional_sugar {
+                if is_conditional_sugar == any_conditional {
                     Ok(is_conditional_sugar)
                 } else {
                     Err(EsResolverError::InvalidExports(
                         format!(
-                            "The `pkg.exports` at {} here is invalid. Some starts with '.' but some does not. ",
+                            "The `pkg.exports` at {} here is invalid. Some keys starts with '.' but some does not. ",
                             package_json_path.to_string_lossy(),
                         )
                     ))
@@ -296,7 +294,7 @@ impl<'a> EsResolver<'a> {
         let package_json_result = fs::read_to_string(&package_json_path).map_err(|e| {
             EsResolverError::IOError(
                 e,
-                format!("Can't read package.json at {:?}", package_json_path),
+                format!("Can't read package.json at {}", package_json_path.to_string_lossy()),
             )
         })?;
 
@@ -309,8 +307,19 @@ impl<'a> EsResolver<'a> {
         );
 
         match package_json.exports {
-            None => return Ok(None),
+            None => {
+                debug!(
+                    package_json_path = format!("{:?}", package_json_path),
+                    "package.json doesn't contain an `exports` field. stop matching package exports. "
+                );
+                return Ok(None)
+            },
             Some(ref exports) => {
+                debug!(
+                    package_json_path = format!("{:?}", package_json_path),
+                    "package.exports is an object"
+                );
+
                 if !package_subpath.contains("*") && !package_subpath.ends_with("/") {
                     let mut maybe_target = match exports {
                         c @ Exports::String(_) => Some(c),
@@ -321,8 +330,13 @@ impl<'a> EsResolver<'a> {
                     };
 
                     if self.is_conditional_exports_main_sugar(&exports, &package_json_path)?
-                        && package_name == "."
+                        && package_subpath == "."
                     {
+                        debug!(
+                            package_json_path = format!("{:?}", package_json_path),
+                            "package.exports is 'conditional exports main sugar' and we match it"
+                        );
+
                         maybe_target = Some(&exports);
                     }
 
@@ -488,7 +502,7 @@ impl<'a> EsResolver<'a> {
         if name.as_bytes()[0] == b'@' {
             match sep_index {
                 Some(i) => {
-                    sep_index = name[i + 1..].find('/');
+                    sep_index = name[i + 1..].find('/').map(|j| j + i + 1);
                 }
                 None => {
                     return Err(EsResolverError::InvalidModuleSpecifier(format!("{} is not a valid package name, because it is scoped without a slash. Valid scoped names are like '@babel/core'. ", name)));
@@ -527,4 +541,14 @@ impl<'a> EsResolver<'a> {
         }
         None
     }
+
+    // /// Reference:
+    // /// 1. https://github.com/dividab/tsconfig-paths/blob/master/src/tsconfig-loader.ts
+    // fn resolve_tsconfig(from_dir: &PathBuf) -> EsResolverResult<Option<TSConfig>> {
+    //     let mut maybe_cur_dir = Some(from_dir.clone());
+
+    //     while maybe_cur_dir.is_some() {
+
+    //     }
+    // }
 }

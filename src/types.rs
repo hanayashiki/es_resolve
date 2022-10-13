@@ -37,12 +37,20 @@ impl EsResolveOptions {
     }
 }
 
+/// Any errors that might occur during [`crate::EsResolver::resolve`]
 #[derive(Debug)]
 pub enum EsResolverError {
+    /// Fail to resolve the target because unable to load a critical file,
+    /// e.g. that [`crate::EsResolver::from`] is not a real file.
     IOError(std::io::Error, String),
+    /// Fail to read a package.json. When `LOAD_PACKAGE_EXPORTS` is assumpted but
+    /// the package.json is invalid, this is raised in accordance to Node's behavior.
     InvalidPackageJSON(serde_json::Error),
+    /// When `LOAD_PACKAGE_EXPORTS`, the exports field is found invalid.
+    /// See <https://nodejs.org/api/packages.html#subpath-exports>.
     InvalidExports(String),
-    InvalidModuleSpecifier(String)
+    InvalidModuleSpecifier(String),
+    ModuleNotFound(String),
 }
 
 pub type EsResolverResult<T> = Result<T, EsResolverError>;
@@ -124,4 +132,12 @@ pub enum Exports {
     String(String),
     Object(IndexMap<String, Option<Exports>>),
     Array(Vec<Exports>)
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct TSConfig {
+    pub base_url: Option<String>,
+    pub paths: Option<IndexMap<String, Vec<String>>>,
+    pub extends: Option<String>,
 }

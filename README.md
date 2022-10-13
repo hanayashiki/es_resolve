@@ -2,6 +2,12 @@
 
 JavaScript/Typescript module resolution in Rust
 
+# Installation
+
+```bash
+cargo add es_resolve
+```
+
 # Features
 
 ## General Features
