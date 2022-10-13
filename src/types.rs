@@ -20,6 +20,7 @@ pub enum TargetEnv {
 pub struct EsResolveOptions {
     pub main_fields: Vec<MainFields>,
     pub conditions: Vec<String>,
+    // TODO: add extensions option
 }
 
 impl EsResolveOptions {
@@ -46,6 +47,9 @@ pub enum EsResolverError {
     /// Fail to read a package.json. When `LOAD_PACKAGE_EXPORTS` is assumpted but
     /// the package.json is invalid, this is raised in accordance to Node's behavior.
     InvalidPackageJSON(serde_json::Error),
+    /// Fail to read a tsconfig.json
+    InvalidTSConfig(serde_json::Error),
+    InvalidTSConfigExtend(String),
     /// When `LOAD_PACKAGE_EXPORTS`, the exports field is found invalid.
     /// See <https://nodejs.org/api/packages.html#subpath-exports>.
     InvalidExports(String),
@@ -106,7 +110,7 @@ impl Extensions {
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub struct PackageJSON {
     pub main: Option<String>,
     pub module: Option<String>,
@@ -131,13 +135,29 @@ impl PackageJSON {
 pub enum Exports {
     String(String),
     Object(IndexMap<String, Option<Exports>>),
-    Array(Vec<Exports>)
+    Array(Vec<Exports>),
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub struct TSConfig {
+    pub extends: Option<String>,
+    #[serde(default)]
+    pub compiler_options: TSConfigCompilerOptions,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TSConfigCompilerOptions {
     pub base_url: Option<String>,
     pub paths: Option<IndexMap<String, Vec<String>>>,
-    pub extends: Option<String>,
+}
+
+impl Default for TSConfigCompilerOptions {
+    fn default() -> Self {
+        TSConfigCompilerOptions {
+            base_url: None,
+            paths: None,
+        }
+    }
 }

@@ -91,3 +91,8 @@ pub static REWRITTEN_EXTENSIONS: &[(Extensions, &[Extensions])] = &[
 pub static PACKAGE_JSON: &str = "package.json";
 
 pub static NODE_MODULES: &str = "node_modules";
+
+pub static TSCONFIG_NAMES: &[&str] = &[
+    "tsconfig.json",
+    "jsconfig.json"
+];

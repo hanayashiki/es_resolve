@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fmt::format, fs, path::PathBuf};
 
 use crate::{data::*, types::*, utils::*};
 use path_clean::PathClean;
@@ -22,12 +22,26 @@ impl<'a> EsResolver<'a> {
         }
     }
 
+    pub fn with_options(
+        target: &'a str,
+        from: &'a PathBuf,
+        env: TargetEnv,
+        options: &EsResolveOptions,
+    ) -> Self {
+        Self {
+            target,
+            from,
+            env: env.clone(),
+            options: options.clone(),
+        }
+    }
+
     fn ok_with(path: PathBuf) -> EsResolverResult<String> {
         return EsResolverResult::Ok(path.clean().to_string_lossy().into());
     }
 
     /// Resolve the path
-    /// 
+    ///
     /// Reference: <https://nodejs.org/api/modules.html#all-together>
     #[tracing::instrument(skip(self))]
     pub fn resolve(&self) -> EsResolverResult<String> {
@@ -67,6 +81,8 @@ impl<'a> EsResolver<'a> {
                 return Self::ok_with(f);
             }
         } else {
+            let maybe_tsconfig = self.resolve_tsconfig(self.from);
+
             let maybe_from_dir = abs_from.parent();
             if let Some(from_dir) = maybe_from_dir {
                 let from_dir = PathBuf::from(from_dir);
@@ -79,7 +95,11 @@ impl<'a> EsResolver<'a> {
             }
         }
 
-        return Err(EsResolverError::ModuleNotFound(format!("Cannot resolve {} from {}", self.target, self.from.to_string_lossy())));
+        return Err(EsResolverError::ModuleNotFound(format!(
+            "Cannot resolve {} from {}",
+            self.target,
+            self.from.to_string_lossy()
+        )));
     }
 
     /// Here we follow esbuild in resolving path:
@@ -294,7 +314,10 @@ impl<'a> EsResolver<'a> {
         let package_json_result = fs::read_to_string(&package_json_path).map_err(|e| {
             EsResolverError::IOError(
                 e,
-                format!("Can't read package.json at {}", package_json_path.to_string_lossy()),
+                format!(
+                    "Can't read package.json at {}",
+                    package_json_path.to_string_lossy()
+                ),
             )
         })?;
 
@@ -312,8 +335,8 @@ impl<'a> EsResolver<'a> {
                     package_json_path = format!("{:?}", package_json_path),
                     "package.json doesn't contain an `exports` field. stop matching package exports. "
                 );
-                return Ok(None)
-            },
+                return Ok(None);
+            }
             Some(ref exports) => {
                 debug!(
                     package_json_path = format!("{:?}", package_json_path),
@@ -542,13 +565,68 @@ impl<'a> EsResolver<'a> {
         None
     }
 
-    // /// Reference:
-    // /// 1. https://github.com/dividab/tsconfig-paths/blob/master/src/tsconfig-loader.ts
-    // fn resolve_tsconfig(from_dir: &PathBuf) -> EsResolverResult<Option<TSConfig>> {
-    //     let mut maybe_cur_dir = Some(from_dir.clone());
+    /// Reference:
+    /// 1. https://github.com/dividab/tsconfig-paths/blob/master/src/tsconfig-loader.ts
+    fn resolve_tsconfig(&self, from_dir: &PathBuf) -> EsResolverResult<Option<TSConfig>> {
+        let mut maybe_cur_dir = Some(from_dir.clone());
 
-    //     while maybe_cur_dir.is_some() {
+        while maybe_cur_dir.is_some() {
+            let cur_dir = maybe_cur_dir.unwrap();
 
-    //     }
-    // }
+            for tsconfig_name in TSCONFIG_NAMES {
+                let tsconfig_path = cur_dir.join(tsconfig_name);
+                let maybe_tsconfig = self.parse_tsconfig(&tsconfig_path)?;
+
+                if let Some(ref tsconfig) = maybe_tsconfig {
+                    return Ok(maybe_tsconfig);
+                }
+            }
+
+            maybe_cur_dir = cur_dir.parent().map(|c| PathBuf::from(c));
+        }
+
+        Ok(None)
+    }
+
+    fn parse_tsconfig(&self, path: &PathBuf) -> EsResolverResult<Option<TSConfig>> {
+        // TODO: what if tsconfig has a ring?
+        if let Ok(content) = fs::read_to_string(&path) {
+            let tsconfig_result: Result<TSConfig, _> = serde_json::from_str(&content);
+
+            let mut tsconfig = tsconfig_result
+                .map(|tsconfig| tsconfig)
+                .map_err(|e| EsResolverError::InvalidTSConfig(e))?;
+
+            tsconfig.compiler_options.base_url = tsconfig
+                .compiler_options
+                .base_url
+                .map(|url| path.with_file_name(url).to_string_lossy().into());
+
+            if let Some(extends) = tsconfig.extends {
+                let extended_resolver =
+                    EsResolver::with_options(&extends, path, TargetEnv::Node, &self.options);
+
+                let extended_tsconfig_path = extended_resolver.resolve()?;
+
+                let maybe_extended_tsconfig =
+                    self.parse_tsconfig(&PathBuf::from(&extended_tsconfig_path))?;
+
+                if let Some(extended_tsconfig) = maybe_extended_tsconfig {
+                    tsconfig.compiler_options.base_url = tsconfig.compiler_options.base_url.or(extended_tsconfig.compiler_options.base_url);
+                    tsconfig.compiler_options.paths = tsconfig.compiler_options.paths.or(extended_tsconfig.compiler_options.paths);
+                } else {
+                    return Err(EsResolverError::InvalidTSConfigExtend(format!(
+                        "The 'extends' of {} does not resolve to a valid JSON module. Is the specifier correct?",
+                        path.to_string_lossy()
+                    )));
+                }
+
+                return Ok(None);
+            } else {
+                return Ok(Some(tsconfig));
+            }
+        } else {
+            Ok(None)
+        }
+    }
 }
