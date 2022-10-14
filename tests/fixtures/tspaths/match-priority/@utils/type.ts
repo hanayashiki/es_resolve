@@ -1,0 +1,1 @@
+export const t = { a: 1 };

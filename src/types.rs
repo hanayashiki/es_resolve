@@ -1,6 +1,5 @@
 use indexmap::IndexMap;
 use serde::Deserialize;
-use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub enum MainFields {
@@ -150,7 +149,7 @@ pub struct TSConfig {
 #[serde(rename_all = "camelCase")]
 pub struct TSConfigCompilerOptions {
     pub base_url: Option<String>,
-    pub paths: Option<IndexMap<String, Vec<String>>>,
+    pub paths: Option<TSConfigPaths>,
 }
 
 impl Default for TSConfigCompilerOptions {
@@ -161,3 +160,5 @@ impl Default for TSConfigCompilerOptions {
         }
     }
 }
+
+pub type TSConfigPaths = IndexMap<String, Vec<String>>;

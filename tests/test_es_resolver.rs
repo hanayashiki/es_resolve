@@ -25,7 +25,9 @@ mod tests {
             .finish();
 
         tracing::subscriber::with_default(collector, || {
+            tracing::debug!("test tracing starts");
             f();
+            tracing::debug!("test tracing ends");
         });
     }
 
@@ -215,6 +217,99 @@ mod tests {
             assert_eq!(
                 r.resolve().unwrap(),
                 source_str("node_modules_/node_modules/exports_star/lib/index.mjs")
+            );
+        });
+    }
+
+    #[test]
+    fn tspaths() {
+        with_tracing(|| {
+            let s = source("tspaths/constant/index.ts");
+
+            let r = EsResolver::new("constant", &s, TargetEnv::Browser);
+
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("tspaths/constant/constant.ts")
+            );
+        });
+
+        with_tracing(|| {
+            let s = source("tspaths/star/pages/Login.tsx");
+
+            let r = EsResolver::new("@components/Text", &s, TargetEnv::Browser);
+
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("tspaths/star/components/Text.tsx")
+            );
+        });
+
+        // If "*": [...] is not in `paths`, typescript will match all paths with baseUrl
+        with_tracing(|| {
+            let s = source("tspaths/star/pages/Login.tsx");
+
+            let r = EsResolver::new("components/Text", &s, TargetEnv::Browser);
+
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("tspaths/star/components/Text.tsx")
+            );
+        });
+
+        // Match to constant via star
+        with_tracing(|| {
+            let s = source("tspaths/star/pages/Login.tsx");
+
+            let r = EsResolver::new("@anything/xxx", &s, TargetEnv::Browser);
+
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("tspaths/star/pages/Login.tsx")
+            );
+
+            let r = EsResolver::new("@anything/yyy", &s, TargetEnv::Browser);
+
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("tspaths/star/pages/Login.tsx")
+            );
+        });
+
+        // Match "*": ["components/*"]
+        with_tracing(|| {
+            let s = source("tspaths/star/pages/Login.tsx");
+
+            let r = EsResolver::new("@components/Text", &s, TargetEnv::Browser);
+
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("tspaths/star/components/Text.tsx")
+            );
+        });
+
+        // Should match "@utils/high-priority/*": ["./@utils/high-priority"],
+        // because it has a longer prefix
+        with_tracing(|| {
+            let s = source("tspaths/match-priority/index.ts");
+
+            let r = EsResolver::new("@utils/high-priority/type", &s, TargetEnv::Browser);
+
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("tspaths/match-priority/@high-priority/type.ts")
+            );
+        });
+
+        // Should handle tsconfig.json with extended JSON syntax
+        with_tracing(|| {
+            let s = source("tspaths/tsconfig-syntax/index.ts");
+
+            let r = EsResolver::new("constant", &s, TargetEnv::Browser);
+
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("tspaths/tsconfig-syntax/constant.ts")
             );
         });
     }

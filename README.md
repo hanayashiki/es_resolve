@@ -2,12 +2,28 @@
 
 JavaScript/TypeScript module resolution in Rust
 
-**This library is under development**
-
 # Installation
 
 ```bash
 cargo add es_resolve
+```
+
+# Get Started
+
+```rust
+use std::path::{Path, PathBuf};
+use es_resolve::*;
+
+// Provide an exact path to the file from which we resolve
+let source = PathBuf::from("tests/fixtures/relative/js.js");
+// Construct an `es_resolve::EsResolver`, then call `resolve` to get the result.
+// Also check `es_resolve::EsResolverError` for a list of errors that might occur!
+let target = EsResolver::new("./ts", &source, TargetEnv::Browser).resolve().unwrap();
+let expected_target_target_path = Path::new("tests/fixtures/relative/ts.ts").canonicalize().unwrap();
+let expected_target = expected_target_target_path.to_string_lossy();
+
+// We expect to get the absolute path to the resolved target module!
+assert_eq!(target, expected_target);
 ```
 
 # Features

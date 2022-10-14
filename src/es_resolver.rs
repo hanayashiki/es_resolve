@@ -1,4 +1,7 @@
-use std::{fmt::format, fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::{data::*, types::*, utils::*};
 use path_clean::PathClean;
@@ -45,6 +48,16 @@ impl<'a> EsResolver<'a> {
     /// Reference: <https://nodejs.org/api/modules.html#all-together>
     #[tracing::instrument(skip(self))]
     pub fn resolve(&self) -> EsResolverResult<String> {
+        return self.resolve_impl(false);
+    }
+
+    /// Resolve the path
+    ///
+    /// Reference: <https://nodejs.org/api/modules.html#all-together>
+    #[tracing::instrument(skip(self))]
+    fn resolve_impl(&self, is_tsconfig: bool) -> EsResolverResult<String> {
+        debug!("resolving {:?} from {:?}", self.target, self.from);
+
         if matches!(self.env, TargetEnv::Node) {
             if self.target.starts_with("node:") {
                 return Ok(String::from(self.target));
@@ -68,20 +81,35 @@ impl<'a> EsResolver<'a> {
             // a. LOAD_AS_FILE(Y + X)
             let abs_to = abs_from.with_file_name(self.target);
 
-            let as_file = self.load_as_file(&abs_to, DEFAULT_EXTENSIONS);
-
-            if let Some(f) = as_file {
-                // TODO: make this compact
-                return Self::ok_with(f);
-            }
-
-            let as_directory = self.load_as_directory(&abs_to);
-
-            if let Some(f) = as_directory {
-                return Self::ok_with(f);
+            if let Some(r) = self.load_as_relative(&abs_to) {
+                return r;
             }
         } else {
-            let maybe_tsconfig = self.resolve_tsconfig(self.from);
+            if !is_tsconfig {
+                let maybe_tsconfig = self.resolve_tsconfig(self.from);
+                if let Ok(Some(tsconfig)) = maybe_tsconfig {
+                    if let (maybe_base_url, Some(paths)) = (
+                        tsconfig.compiler_options.base_url,
+                        tsconfig.compiler_options.paths,
+                    ) {
+                        if let Some(paths) = self.match_tsconfig_paths(
+                            &maybe_base_url.unwrap_or(String::from(".")),
+                            &paths,
+                        ) {
+                            for p in paths {
+                                if let Some(r) = self.load_as_relative(&PathBuf::from(p)) {
+                                    return r;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // TODO: give reasonable warning...
+                    debug!("fail to resolve tsconfig = {:?}", maybe_tsconfig);
+                }
+            }
+
+            debug!("trying to load {:?} as a node module", self.target);
 
             let maybe_from_dir = abs_from.parent();
             if let Some(from_dir) = maybe_from_dir {
@@ -96,10 +124,26 @@ impl<'a> EsResolver<'a> {
         }
 
         return Err(EsResolverError::ModuleNotFound(format!(
-            "Cannot resolve {} from {}",
+            "Cannot resolve {:?} from {:?}",
             self.target,
-            self.from.to_string_lossy()
+            self.from,
         )));
+    }
+
+    fn load_as_relative(&self, abs_to: &PathBuf) -> Option<EsResolverResult<String>> {
+        let as_file = self.load_as_file(&abs_to, DEFAULT_EXTENSIONS);
+
+        if let Some(f) = as_file {
+            return Some(Self::ok_with(f));
+        }
+
+        let as_directory = self.load_as_directory(&abs_to);
+
+        if let Some(f) = as_directory {
+            return Some(Self::ok_with(f));
+        }
+
+        None
     }
 
     /// Here we follow esbuild in resolving path:
@@ -115,11 +159,20 @@ impl<'a> EsResolver<'a> {
     #[tracing::instrument(skip(self))]
     fn load_as_file(&self, abs_to: &PathBuf, extensions: &[Extensions]) -> Option<PathBuf> {
         if abs_to.is_file() {
+            debug!("matched by exact path {}", abs_to.to_string_lossy());
+
             return Some(abs_to.clone());
         } else {
             for extension in extensions.iter() {
                 match Self::try_extension(abs_to, extension) {
-                    c @ Some(_) => return c,
+                    c @ Some(_) => {
+                        debug!(
+                            path = format!("{}", c.as_ref().unwrap().to_string_lossy()),
+                            extension = format!("{:?}", extension),
+                            "matched by appending extension"
+                        );
+                        return c;
+                    }
                     _ => {}
                 };
             }
@@ -128,13 +181,28 @@ impl<'a> EsResolver<'a> {
                 if abs_to.ends_with(rewritten_extension.to_str()) {
                     for extension in try_extensions.iter() {
                         match Self::try_extension(abs_to, extension) {
-                            c @ Some(_) => return c,
+                            Some(p) => {
+                                debug!(
+                                    path = format!("{}", p.to_string_lossy()),
+                                    extension = format!("{:?}", extension),
+                                    "matched by rewritten extension"
+                                );
+
+                                return Some(p);
+                            }
                             _ => {}
                         };
                     }
                 }
             }
         }
+
+        debug!(
+            "cannot match {} with extensions {:?}",
+            abs_to.to_string_lossy(),
+            extensions
+        );
+
         None
     }
 
@@ -227,10 +295,7 @@ impl<'a> EsResolver<'a> {
 
             let node_modules_dir = cur_dir.join("node_modules");
 
-            debug!(
-                node_modules_dir = format!("{:?}", node_modules_dir),
-                "visiting"
-            );
+            debug!("visiting {:?}", node_modules_dir);
 
             match self.load_package_exports(&node_modules_dir, name) {
                 c @ Ok(Some(_)) => return c,
@@ -244,6 +309,8 @@ impl<'a> EsResolver<'a> {
                 }
             }
 
+            debug!("fail to resolve by package exports at {:?}", node_modules_dir);
+
             let module_base = node_modules_dir.join(name);
 
             match self.load_as_file(&module_base, DEFAULT_EXTENSIONS) {
@@ -255,6 +322,8 @@ impl<'a> EsResolver<'a> {
                 c @ Some(_) => return Ok(c),
                 _ => {}
             };
+
+            debug!("fail to resolve from {:?}", node_modules_dir);
 
             maybe_cur_dir = cur_dir.parent().map(|c| PathBuf::from(c));
         }
@@ -577,7 +646,11 @@ impl<'a> EsResolver<'a> {
                 let tsconfig_path = cur_dir.join(tsconfig_name);
                 let maybe_tsconfig = self.parse_tsconfig(&tsconfig_path)?;
 
-                if let Some(ref tsconfig) = maybe_tsconfig {
+                if let Some(_) = maybe_tsconfig {
+                    debug!(
+                        tsconfig = format!("{}", tsconfig_path.to_string_lossy()),
+                        "tsconfig resolved",
+                    );
                     return Ok(maybe_tsconfig);
                 }
             }
@@ -585,13 +658,16 @@ impl<'a> EsResolver<'a> {
             maybe_cur_dir = cur_dir.parent().map(|c| PathBuf::from(c));
         }
 
+        debug!("tsconfig is not found");
+
         Ok(None)
     }
 
     fn parse_tsconfig(&self, path: &PathBuf) -> EsResolverResult<Option<TSConfig>> {
         // TODO: what if tsconfig has a ring?
         if let Ok(content) = fs::read_to_string(&path) {
-            let tsconfig_result: Result<TSConfig, _> = serde_json::from_str(&content);
+            let stripped = json_comments::StripComments::new(content.as_bytes());
+            let tsconfig_result: Result<TSConfig, _> = serde_json::from_reader(stripped);
 
             let mut tsconfig = tsconfig_result
                 .map(|tsconfig| tsconfig)
@@ -606,14 +682,21 @@ impl<'a> EsResolver<'a> {
                 let extended_resolver =
                     EsResolver::with_options(&extends, path, TargetEnv::Node, &self.options);
 
-                let extended_tsconfig_path = extended_resolver.resolve()?;
+                let extended_tsconfig_path =
+                    extended_resolver.resolve_impl(/* is_tsconfig */ true)?;
 
                 let maybe_extended_tsconfig =
                     self.parse_tsconfig(&PathBuf::from(&extended_tsconfig_path))?;
 
                 if let Some(extended_tsconfig) = maybe_extended_tsconfig {
-                    tsconfig.compiler_options.base_url = tsconfig.compiler_options.base_url.or(extended_tsconfig.compiler_options.base_url);
-                    tsconfig.compiler_options.paths = tsconfig.compiler_options.paths.or(extended_tsconfig.compiler_options.paths);
+                    tsconfig.compiler_options.base_url = tsconfig
+                        .compiler_options
+                        .base_url
+                        .or(extended_tsconfig.compiler_options.base_url);
+                    tsconfig.compiler_options.paths = tsconfig
+                        .compiler_options
+                        .paths
+                        .or(extended_tsconfig.compiler_options.paths);
                 } else {
                     return Err(EsResolverError::InvalidTSConfigExtend(format!(
                         "The 'extends' of {} does not resolve to a valid JSON module. Is the specifier correct?",
@@ -627,6 +710,66 @@ impl<'a> EsResolver<'a> {
             }
         } else {
             Ok(None)
+        }
+    }
+
+    #[tracing::instrument(skip(self))]
+    fn match_tsconfig_paths(&self, base_url: &str, paths: &TSConfigPaths) -> Option<Vec<String>> {
+        match paths.get(self.target) {
+            // If it is a direct match...
+            Some(paths) => {
+                debug!("mapping {} to constant match {:?}", self.target, paths);
+
+                return Some(
+                    paths
+                        .iter()
+                        .map(|p| Path::new(base_url).join(p).to_string_lossy().into())
+                        .collect(),
+                );
+            }
+            None => {
+                // Now it must be a star match...
+                let mut best_key = "";
+
+                for (key, _) in paths {
+                    if match_exports_pattern(key, self.target)
+                        && pattern_key_compare(best_key, key) == 1
+                    {
+                        best_key = key.as_str();
+                    }
+                }
+
+                // TypeScript implicitly has a `*: [*]` path entry.
+                if best_key.len() == 0 {
+                    return Some(vec![Path::new(base_url)
+                        .join(self.target)
+                        .to_string_lossy()
+                        .into()]);
+                } else {
+                    let best_key_paths = paths.get(best_key).unwrap();
+                    debug!(
+                        "mapping {} to pattern {:?}: {:?}",
+                        self.target, best_key, best_key_paths
+                    );
+
+                    return Some(
+                        best_key_paths
+                            .iter()
+                            .map(|p| {
+                                let extracted = extract_exports_pattern(best_key, self.target);
+
+                                let path_to_try = Path::new(base_url)
+                                    .join(p.replacen('*', extracted, 1))
+                                    .to_string_lossy()
+                                    .into();
+
+                                debug!("trying path {} for {}", path_to_try, self.target);
+                                return path_to_try;
+                            })
+                            .collect(),
+                    );
+                }
+            }
         }
     }
 }
