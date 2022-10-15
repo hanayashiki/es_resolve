@@ -1,9 +1,12 @@
 [package]
 name = "es_resolve"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 keywords = ["javascript", "typescript", "npm", "node", "resolve"]
 exclude = ["/target", "/tests", "/examples"]
+description = "JavaScript/TypeScript module resolution in Rust"
+repository = "https://github.com/hanayashiki/es_resolve"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

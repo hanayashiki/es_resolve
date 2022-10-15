@@ -1,6 +1,8 @@
 use indexmap::IndexMap;
 use serde::Deserialize;
 
+use crate::data::DEFAULT_EXTENSIONS;
+
 #[derive(Clone, Debug)]
 pub enum MainFields {
     Main,
@@ -19,19 +21,25 @@ pub enum TargetEnv {
 pub struct EsResolveOptions {
     pub main_fields: Vec<MainFields>,
     pub conditions: Vec<String>,
-    // TODO: add extensions option
+    pub extensions: Vec<Extensions>,
 }
 
 impl EsResolveOptions {
+    pub fn default_extensions() -> Vec<Extensions> {
+        return Vec::from(DEFAULT_EXTENSIONS);
+    }
+
     pub fn default_for(env: TargetEnv) -> Self {
         match env {
             TargetEnv::Node => Self {
                 main_fields: vec![MainFields::Main, MainFields::Module], // Node.js itself doesn't respect "module"
                 conditions: vec![format!("node"), format!("require"), format!("default")],
+                extensions: Self::default_extensions(),
             },
             TargetEnv::Browser => Self {
                 main_fields: vec![MainFields::Browser, MainFields::Module, MainFields::Main],
                 conditions: vec![format!("browser"), format!("import"), format!("default")],
+                extensions: Self::default_extensions(),
             },
         }
     }
@@ -58,7 +66,7 @@ pub enum EsResolverError {
 
 pub type EsResolverResult<T> = Result<T, EsResolverError>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Extensions {
     Mjs,
     Mts,

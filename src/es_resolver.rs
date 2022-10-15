@@ -87,25 +87,32 @@ impl<'a> EsResolver<'a> {
         } else {
             if !is_tsconfig {
                 let maybe_tsconfig = self.resolve_tsconfig(self.from);
-                if let Ok(Some(tsconfig)) = maybe_tsconfig {
-                    if let (maybe_base_url, Some(paths)) = (
-                        tsconfig.compiler_options.base_url,
-                        tsconfig.compiler_options.paths,
-                    ) {
-                        if let Some(paths) = self.match_tsconfig_paths(
-                            &maybe_base_url.unwrap_or(String::from(".")),
-                            &paths,
+
+                match maybe_tsconfig {
+                    Ok(Some(tsconfig)) => {
+                        if let (maybe_base_url, Some(paths)) = (
+                            tsconfig.compiler_options.base_url,
+                            tsconfig.compiler_options.paths,
                         ) {
-                            for p in paths {
-                                if let Some(r) = self.load_as_relative(&PathBuf::from(p)) {
-                                    return r;
+                            if let Some(paths) = self.match_tsconfig_paths(
+                                &maybe_base_url.unwrap_or(String::from(".")),
+                                &paths,
+                            ) {
+                                for p in paths {
+                                    if let Some(r) = self.load_as_relative(&PathBuf::from(p)) {
+                                        return r;
+                                    }
                                 }
                             }
                         }
+                    },
+                    Ok(None) => {
+                        debug!("cannot locate a tsconfig for {:?}", self.from);
                     }
-                } else {
-                    // TODO: give reasonable warning...
-                    debug!("fail to resolve tsconfig = {:?}", maybe_tsconfig);
+                    Err(e) => {
+                        debug!("fail to resolve tsconfig = {:?}. Note that tsconfig.json cannot have trailing comma as one of our caveats.", e);
+                        return Err(e);
+                    }
                 }
             }
 
@@ -125,13 +132,12 @@ impl<'a> EsResolver<'a> {
 
         return Err(EsResolverError::ModuleNotFound(format!(
             "Cannot resolve {:?} from {:?}",
-            self.target,
-            self.from,
+            self.target, self.from,
         )));
     }
 
     fn load_as_relative(&self, abs_to: &PathBuf) -> Option<EsResolverResult<String>> {
-        let as_file = self.load_as_file(&abs_to, DEFAULT_EXTENSIONS);
+        let as_file = self.load_as_file(&abs_to, &self.options.extensions);
 
         if let Some(f) = as_file {
             return Some(Self::ok_with(f));
@@ -236,7 +242,7 @@ impl<'a> EsResolver<'a> {
                 if let Some(path) = maybe_path {
                     let target = abs_to.join(path);
 
-                    match self.load_as_file(&target, DEFAULT_EXTENSIONS) {
+                    match self.load_as_file(&target, &self.options.extensions) {
                         c @ Some(_) => return c,
                         _ => {}
                     };
@@ -255,7 +261,7 @@ impl<'a> EsResolver<'a> {
     /// We do it as if we are trying on './directory/index'.
     fn load_index(&self, abs_to: &PathBuf) -> Option<PathBuf> {
         let with_index = abs_to.join("index");
-        return self.load_as_file(&with_index, DEFAULT_EXTENSIONS);
+        return self.load_as_file(&with_index, &self.options.extensions);
     }
 
     fn load_package_json(p: &PathBuf) -> EsResolverResult<PackageJSON> {
@@ -293,12 +299,15 @@ impl<'a> EsResolver<'a> {
         while maybe_cur_dir.is_some() {
             let cur_dir = maybe_cur_dir.unwrap();
 
-            let node_modules_dir = cur_dir.join("node_modules");
+            let node_modules_dir = cur_dir.join(NODE_MODULES);
 
             debug!("visiting {:?}", node_modules_dir);
 
             match self.load_package_exports(&node_modules_dir, name) {
                 c @ Ok(Some(_)) => return c,
+                Ok(None) => {
+                    debug!("cannot load exports for package {}", name);
+                }
                 c @ (Err(EsResolverError::InvalidModuleSpecifier(_))
                 | Err(EsResolverError::IOError(_, _))) => {
                     debug!(err = format!("{:?}", c), "load_package_exports error");
@@ -309,11 +318,14 @@ impl<'a> EsResolver<'a> {
                 }
             }
 
-            debug!("fail to resolve by package exports at {:?}", node_modules_dir);
+            debug!(
+                "fail to resolve by package exports at {:?}",
+                node_modules_dir
+            );
 
             let module_base = node_modules_dir.join(name);
 
-            match self.load_as_file(&module_base, DEFAULT_EXTENSIONS) {
+            match self.load_as_file(&module_base, &self.options.extensions) {
                 c @ Some(_) => return Ok(c),
                 _ => {}
             };
@@ -678,7 +690,10 @@ impl<'a> EsResolver<'a> {
                 .base_url
                 .map(|url| path.with_file_name(url).to_string_lossy().into());
 
-            if let Some(extends) = tsconfig.extends {
+            if let Some(ref extends) = tsconfig.extends {
+                let mut tsconfig_options = self.options.clone();
+                tsconfig_options.extensions = vec![Extensions::Json];
+
                 let extended_resolver =
                     EsResolver::with_options(&extends, path, TargetEnv::Node, &self.options);
 
@@ -697,14 +712,15 @@ impl<'a> EsResolver<'a> {
                         .compiler_options
                         .paths
                         .or(extended_tsconfig.compiler_options.paths);
+
+                    debug!("tsconfig extends with {}", extended_tsconfig_path);
+                    return Ok(Some(tsconfig));
                 } else {
                     return Err(EsResolverError::InvalidTSConfigExtend(format!(
                         "The 'extends' of {} does not resolve to a valid JSON module. Is the specifier correct?",
                         path.to_string_lossy()
                     )));
                 }
-
-                return Ok(None);
             } else {
                 return Ok(Some(tsconfig));
             }

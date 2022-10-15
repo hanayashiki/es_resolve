@@ -313,4 +313,31 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn tsconfig() {
+        // Extends relative tsconfig
+        with_tracing(|| {
+            let s = source("tspaths/tsconfig-extends/relative/index.ts");
+
+            let r = EsResolver::new("constant", &s, TargetEnv::Browser);
+
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("tspaths/tsconfig-extends/relative/constant.ts")
+            );
+        });
+
+        // Extends node_modules tsconfig
+        with_tracing(|| {
+            let s = source("tspaths/tsconfig-extends/node_modules_/index.ts");
+
+            let r = EsResolver::new("@base", &s, TargetEnv::Browser);
+
+            assert_eq!(
+                r.resolve().unwrap(),
+                source_str("tspaths/tsconfig-extends/node_modules_/base.ts")
+            );
+        });
+    }
 }
