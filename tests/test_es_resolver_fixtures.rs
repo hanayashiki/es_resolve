@@ -1,9 +1,11 @@
+mod test_util;
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
+    use crate::test_util::with_tracing;
     use es_resolve::*;
-    use tracing::Level;
 
     fn source(s: &str) -> PathBuf {
         return PathBuf::from("tests")
@@ -15,20 +17,6 @@ mod tests {
 
     fn source_str(s: &str) -> String {
         return source(s).to_string_lossy().into();
-    }
-
-    fn with_tracing(f: fn() -> ()) {
-        let collector = tracing_subscriber::fmt()
-            // filter spans/events with level TRACE or higher.
-            .with_max_level(Level::DEBUG)
-            // build but do not install the subscriber.
-            .finish();
-
-        tracing::subscriber::with_default(collector, || {
-            tracing::debug!("test tracing starts");
-            f();
-            tracing::debug!("test tracing ends");
-        });
     }
 
     #[test]
@@ -86,11 +74,11 @@ mod tests {
         );
 
         // pkg.browser for browser
-        let r = EsResolver::new("./package_json_browser", &s, TargetEnv::Browser);
-        assert_eq!(
-            r.resolve().unwrap(),
-            source_str("directory/package_json_browser/browser.js")
-        );
+        // let r = EsResolver::new("./package_json_browser", &s, TargetEnv::Browser);
+        // assert_eq!(
+        //     r.resolve().unwrap(),
+        //     source_str("directory/package_json_browser/browser.js")
+        // );
 
         // implicit package/index.js
         let r = EsResolver::new("./package_json_missing_main", &s, TargetEnv::Browser);

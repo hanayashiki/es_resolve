@@ -14,7 +14,6 @@ fn package_json() {
         assert_eq!(package_json, PackageJSON {
             main: None,
             module: None,
-            browser: None,
             react_native: None,
             exports: Some(Exports::String(format!("index.js"))),
         })
