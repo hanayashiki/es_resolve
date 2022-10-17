@@ -7,7 +7,7 @@ use crate::data::DEFAULT_EXTENSIONS;
 pub enum MainFields {
     Main,
     Module,
-    Browser,
+    //    Browser,
     ReactNative,
 }
 
@@ -37,8 +37,13 @@ impl EsResolveOptions {
                 extensions: Self::default_extensions(),
             },
             TargetEnv::Browser => Self {
-                main_fields: vec![MainFields::Browser, MainFields::Module, MainFields::Main],
-                conditions: vec![format!("browser"), format!("import"), format!("default")],
+                main_fields: vec![MainFields::Module, MainFields::Main],
+                conditions: vec![
+                    format!("browser"),
+                    format!("module"),
+                    format!("import"),
+                    format!("default"),
+                ],
                 extensions: Self::default_extensions(),
             },
         }
@@ -121,7 +126,10 @@ impl Extensions {
 pub struct PackageJSON {
     pub main: Option<String>,
     pub module: Option<String>,
-    pub browser: Option<String>,
+    // Browser field needs special treatment:
+    // Temporarily removed.
+    // https://github.com/defunctzombie/package-browser-field-spec
+    // pub browser: Option<String>,
     pub react_native: Option<String>,
     pub exports: Option<Exports>,
 }
@@ -131,7 +139,7 @@ impl PackageJSON {
         match field {
             MainFields::Main => self.main.clone(),
             MainFields::Module => self.module.clone(),
-            MainFields::Browser => self.browser.clone(),
+            // MainFields::Browser => self.browser.clone(),
             MainFields::ReactNative => self.react_native.clone(),
         }
     }
