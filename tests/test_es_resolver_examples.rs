@@ -21,7 +21,7 @@ mod tests {
     }
 
     #[test]
-    fn exports_sugar() {
+    fn emotion_styled() {
         with_tracing(|| {
             let s = source("emotion-styled/index.js");
 

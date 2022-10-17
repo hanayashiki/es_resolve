@@ -59,6 +59,14 @@ mod tests {
     }
 
     #[test]
+    fn relative_double() {
+        let s = source("relative/index.js");
+
+        let r = EsResolver::new("./double-ext.ext", &s, TargetEnv::Browser);
+        assert_eq!(r.resolve().unwrap(), source_str("relative/double-ext.ext.js"));
+    }
+
+    #[test]
     fn directory() {
         let s = source("directory/index.js");
 

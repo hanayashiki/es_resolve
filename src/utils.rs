@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 pub fn match_exports_pattern(pattern: &str, target: &str) -> bool {
     let star_index = pattern.find('*');
 
@@ -46,5 +48,22 @@ pub fn pattern_key_compare(a: &str, b: &str) -> isize {
         1
     } else {
         0
+    }
+}
+
+pub fn add_extension(
+    path: &PathBuf,
+    extension: impl AsRef<std::path::Path>,
+) -> PathBuf {
+    match path.extension() {
+        Some(ext) => {
+            let mut p = PathBuf::from(path);
+            let mut ext = ext.to_os_string();
+            ext.push(".");
+            ext.push(extension.as_ref());
+            p.set_extension(ext);
+            return p;
+        }
+        None => path.with_extension(extension.as_ref()),
     }
 }

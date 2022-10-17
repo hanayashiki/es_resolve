@@ -1,6 +1,6 @@
 [package]
 name = "es_resolve"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 keywords = ["javascript", "typescript", "npm", "node", "resolve"]
 exclude = ["/target", "/tests", "/examples"]

@@ -105,7 +105,7 @@ impl<'a> EsResolver<'a> {
                                 }
                             }
                         }
-                    },
+                    }
                     Ok(None) => {
                         debug!("cannot locate a tsconfig for {:?}", self.from);
                     }
@@ -170,7 +170,7 @@ impl<'a> EsResolver<'a> {
             return Some(abs_to.clone());
         } else {
             for extension in extensions.iter() {
-                match Self::try_extension(abs_to, extension) {
+                match Self::try_extension(abs_to, extension, true) {
                     c @ Some(_) => {
                         debug!(
                             path = format!("{}", c.as_ref().unwrap().to_string_lossy()),
@@ -184,9 +184,9 @@ impl<'a> EsResolver<'a> {
             }
 
             for (rewritten_extension, try_extensions) in REWRITTEN_EXTENSIONS.iter() {
-                if abs_to.ends_with(rewritten_extension.to_str()) {
+                if abs_to.to_str()?.ends_with(rewritten_extension.to_str()) {
                     for extension in try_extensions.iter() {
-                        match Self::try_extension(abs_to, extension) {
+                        match Self::try_extension(abs_to, extension, false) {
                             Some(p) => {
                                 debug!(
                                     path = format!("{}", p.to_string_lossy()),
@@ -636,9 +636,14 @@ impl<'a> EsResolver<'a> {
         Ok((package_name, &name[package_name.len()..]))
     }
 
-    fn try_extension(abs_to: &PathBuf, extension: &Extensions) -> Option<PathBuf> {
+    fn try_extension(abs_to: &PathBuf, extension: &Extensions, append: bool) -> Option<PathBuf> {
         let extension_str = extension.to_str();
-        let with_extension = abs_to.with_extension(extension_str);
+
+        let with_extension = match append {
+            true => add_extension(abs_to, extension_str),
+            false => abs_to.with_extension(extension_str),
+        };
+        println!("with_extension = {:?}, append = {}", with_extension, append);
 
         if with_extension.exists() {
             return Some(PathBuf::from(with_extension.clean()));
