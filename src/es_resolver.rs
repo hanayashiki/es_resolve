@@ -10,13 +10,13 @@ use tracing::debug;
 #[derive(Debug)]
 pub struct EsResolver<'a> {
     pub target: &'a str,
-    pub from: &'a PathBuf,
+    pub from: &'a Path,
     pub env: TargetEnv,
     pub options: EsResolveOptions,
 }
 
 impl<'a> EsResolver<'a> {
-    pub fn new(target: &'a str, from: &'a PathBuf, env: TargetEnv) -> Self {
+    pub fn new(target: &'a str, from: &'a Path, env: TargetEnv) -> Self {
         Self {
             target,
             from,
@@ -648,8 +648,8 @@ impl<'a> EsResolver<'a> {
 
     /// Reference:
     /// 1. https://github.com/dividab/tsconfig-paths/blob/master/src/tsconfig-loader.ts
-    fn resolve_tsconfig(&self, from_dir: &PathBuf) -> EsResolverResult<Option<TSConfig>> {
-        let mut maybe_cur_dir = Some(from_dir.clone());
+    fn resolve_tsconfig(&self, from_dir: &Path) -> EsResolverResult<Option<TSConfig>> {
+        let mut maybe_cur_dir = Some(from_dir.to_path_buf());
 
         while maybe_cur_dir.is_some() {
             let cur_dir = maybe_cur_dir.unwrap();
