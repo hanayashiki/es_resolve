@@ -643,7 +643,6 @@ impl<'a> EsResolver<'a> {
             true => add_extension(abs_to, extension_str),
             false => abs_to.with_extension(extension_str),
         };
-        println!("with_extension = {:?}, append = {}", with_extension, append);
 
         if with_extension.exists() {
             return Some(PathBuf::from(with_extension.clean()));
