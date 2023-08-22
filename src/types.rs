@@ -19,8 +19,25 @@ pub enum TargetEnv {
 
 #[derive(Clone, Debug)]
 pub struct EsResolveOptions {
+    /// The priority by which the index file of package.json is resolved.
+    /// 
+    /// By default:
+    /// 
+    /// for [`TargetEnv::Node`], is `vec![MainFields::Main, MainFields::Module]`.
+    /// 
+    /// for [`TargetEnv::Browser`] is `vec![MainFields::Module, MainFields::Main]`.
     pub main_fields: Vec<MainFields>,
+    /// The priority the conditions in `exports` follows, which mimics how NodeJS handles [conditonal exports](https://nodejs.org/api/packages.html#conditional-exports).
+    /// 
+    /// By default:
+    /// 
+    /// for [`TargetEnv::Node`], is `vec![format!("node"), format!("require"), format!("default")]`.
+    /// 
+    /// for [`TargetEnv::Browser`] is `vec![format!("browser"), format!("module"), format!("import"), format!("default")`.
     pub conditions: Vec<String>,
+    /// The priority of file extensions that files are found.
+    /// 
+    /// Default: `[Extensions::Tsx, Extensions::Ts, Extensions::Jsx, Extensions::Js, Extensions::Css, Extensions::Json]`
     pub extensions: Vec<Extensions>,
 }
 

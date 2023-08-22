@@ -13,5 +13,5 @@ pub use types::{
   TargetEnv,
   EsResolverError,
   EsResolveOptions,
-  Extensions
+  Extensions,
 };
